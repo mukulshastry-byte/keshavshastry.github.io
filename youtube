@@ -1,0 +1,120 @@
+import time
+import os
+import base64
+from playwright.sync_api import sync_playwright
+from openai import OpenAI
+
+# 1. Provide your exact OpenAI API key here
+AI_API_KEY = "YOUR_OPENAI_API_KEY_HERE"
+client = OpenAI(api_key=AI_API_KEY)
+
+def encode_image(image_path):
+    """Converts the local image file into a base64 string for the AI."""
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
+
+def watch_and_analyze_youtube(video_url, watch_duration_seconds=30):
+    print("🤖 Launching Chrome browser...")
+    captured_frames = []
+    
+    with sync_playwright() as p:
+        # headless=False lets you see the browser physically operate like a human
+        browser = p.chromium.launch(headless=False)
+        page = browser.new_page()
+        page.set_viewport_size({"width": 1280, "height": 720})
+        
+        print(f"🔗 Opening: {video_url}")
+        page.goto(video_url)
+        time.sleep(5)  # Allow page layout to build up
+
+        # Initial click on the middle player to dismiss overlays and kick off play
+        try:
+            page.click(".html5-video-player", timeout=3000)
+        except:
+            pass
+
+        start_time = time.time()
+        frame_count = 0
+
+        print(f"👀 Simulating visual gaze for {watch_duration_seconds} seconds...")
+        
+        while time.time() - start_time < watch_duration_seconds:
+            elapsed = int(time.time() - start_time)
+            
+            # --- AD CLOCK CHECKER ---
+            # Modern targets for YouTube's skippable ads
+            ad_selectors = [
+                ".ytp-ad-skip-button-modern",
+                ".ytp-skip-ad-button",
+                "button[aria-label^='Skip ad']"
+            ]
+            
+            for selector in ad_selectors:
+                try:
+                    skip_btn = page.query_selector(selector)
+                    if skip_btn and skip_btn.is_visible():
+                        skip_btn.click()
+                        print(f"⚡ [Ad Detected] Bypassed ad successfully at second {elapsed}!")
+                        time.sleep(1)
+                        break
+                except:
+                    pass
+
+            # --- CAPTURING SIGHTS ---
+            video_player = page.query_selector(".html5-video-player")
+            if video_player:
+                frame_path = f"frame_{frame_count}.png"
+                video_player.screenshot(path=frame_path)
+                captured_frames.append(frame_path)
+                print(f"📸 Snapshot recorded at second {elapsed}")
+                frame_count += 1
+                
+            time.sleep(4)  # Pacing interval (captures roughly every 4 seconds)
+            
+        print("\n⏱️ Viewing window complete. Closing window...")
+        browser.close()
+        
+    # --- AI COMPREHENSION ---
+    if not captured_frames:
+        print("❌ Visual storage empty. Exiting.")
+        return
+
+    print("🧠 Analyzing sequential visual memories...")
+    
+    content_payload = [
+        {
+            "type": "text", 
+            "text": "The following snapshots represent a temporal sequence of a video I watched. Walk me through what transpired in the timeline."
+        }
+    ]
+    
+    for frame in captured_frames:
+        base64_image = encode_image(frame)
+        content_payload.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{base64_image}"}
+        })
+        
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",  # Highly effective for cost & layout logic
+            messages=[{"role": "user", "content": content_payload}],
+            max_tokens=500
+        )
+        print("\n=== AI COMPREHENSION SUMMARY ===")
+        print(response.choices[0].message.content)
+        print("================================\n")
+    except Exception as e:
+        print(f"❌ Brain connection failed: {e}")
+        
+    # --- FLUSH STORAGE ---
+    print("🧹 Wiping temporary local visual files...")
+    for frame in captured_frames:
+        if os.path.exists(frame):
+            os.remove(frame)
+    print("✨ Job finished.")
+
+if __name__ == "__main__":
+    # Test link
+    target = "https://www.youtube.com/watch?v=dQw4w9WgXcQ" 
+    watch_and_analyze_youtube(target, watch_duration_seconds=30)
